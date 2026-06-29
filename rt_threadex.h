@@ -1,44 +1,44 @@
 #pragma once
 #include <windows.h>
-typedef NTSTATUS(NTAPI* pfnNtCreateThreadEx)
-(
-	OUT PHANDLE hThread,
-	IN ACCESS_MASK DesiredAccess,
-	IN PVOID ObjectAttributes,
-	IN HANDLE ProcessHandle,
-	IN PVOID lpStartAddress,
-	IN PVOID lpParameter,
-	IN ULONG Flags,
-	IN SIZE_T StackZeroBits,
-	IN SIZE_T SizeOfStackCommit,
-	IN SIZE_T SizeOfStackReserve,
-	OUT PVOID lpBytesBuffer);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef NT_SUCCESS
 #define NT_SUCCESS(x) ((x) >= 0)
+#endif
 
-HANDLE NtCreateThreadEx(HANDLE hProcess, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter) {
-	HMODULE hNtDll = GetModuleHandleW(L"ntdll.dll");
+typedef NTSTATUS(NTAPI* pfnNtCreateThreadEx)(
+	PHANDLE hThread,
+	ACCESS_MASK DesiredAccess,
+	PVOID ObjectAttributes,
+	HANDLE ProcessHandle,
+	PVOID lpStartAddress,
+	PVOID lpParameter,
+	ULONG Flags,
+	SIZE_T StackZeroBits,
+	SIZE_T SizeOfStackCommit,
+	SIZE_T SizeOfStackReserve,
+	PVOID lpBytesBuffer);
+
+static HANDLE NtCreateThreadEx(HANDLE hProcess, LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter) {
+	HMODULE hNtDll;
+	pfnNtCreateThreadEx pNtCreateThreadEx;
+	HANDLE hThread = NULL;
+	NTSTATUS status;
+
+	hNtDll = GetModuleHandleW(L"ntdll.dll");
 	if (!hNtDll) return INVALID_HANDLE_VALUE;
-	auto NtCreateThreadEx = reinterpret_cast<pfnNtCreateThreadEx>(
-		GetProcAddress(hNtDll, "NtCreateThreadEx")
-		);
-	if (!NtCreateThreadEx) return INVALID_HANDLE_VALUE;
-	HANDLE hThread = nullptr;
-	NTSTATUS status = NtCreateThreadEx(
-		&hThread,
-		THREAD_ALL_ACCESS,
-		nullptr,
-		hProcess,
-		lpStartAddress,
-		lpParameter,
-		FALSE,
-		0,
-		0,
-		0,
-		nullptr
-	);
-	if (!NT_SUCCESS(status)) {
-		return INVALID_HANDLE_VALUE;
-	}
+	pNtCreateThreadEx = (pfnNtCreateThreadEx)GetProcAddress(hNtDll, "NtCreateThreadEx");
+	if (!pNtCreateThreadEx) return INVALID_HANDLE_VALUE;
+	status = pNtCreateThreadEx(
+		&hThread, THREAD_ALL_ACCESS, NULL, hProcess,
+		lpStartAddress, lpParameter, FALSE, 0, 0, 0, NULL);
+	if (!NT_SUCCESS(status)) return INVALID_HANDLE_VALUE;
 	return hThread;
 }
+
+#ifdef __cplusplus
+}
+#endif

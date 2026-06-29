@@ -1,8 +1,22 @@
 #pragma once
-#include <string_view>
 #include "rt_utl.h"
 #include "rt_asm.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef STATUS_NOT_SUPPORTED
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BB)
+#endif
+
+// From phnt: encodes a 32-bit APC routine pointer so the kernel knows to
+// dispatch the APC via the WoW64 32-bit user-mode dispatcher rather than as
+// a native 64-bit routine.
+#ifndef Wow64EncodeApcRoutine
+#define Wow64EncodeApcRoutine(ApcRoutine) \
+    ((PVOID)((0 - ((LONG_PTR)(ApcRoutine))) << 2))
+#endif
 
 typedef NTSTATUS(NTAPI* pfnNtQueryInformationThread)(
 	HANDLE ThreadHandle,
@@ -20,55 +34,63 @@ typedef NTSTATUS(NTAPI* pfnNtQueueApcThreadEx2)(
 	PVOID ApcArgument2,
 	PVOID ApcArgument3);
 
-HANDLE FindBestApcThread(DWORD targetPid) {
-	HMODULE hNtDll = GetModuleHandleW(L"ntdll.dll");
-	if (!hNtDll) return INVALID_HANDLE_VALUE;
-
-	auto NtQueryInformationThread = reinterpret_cast<pfnNtQueryInformationThread>(
-		GetProcAddress(hNtDll, "NtQueryInformationThread"));
-	if (!NtQueryInformationThread) return INVALID_HANDLE_VALUE;
-
-	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-	if (hSnapshot == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
-
-	THREADENTRY32 te{ sizeof(te) };
+static HANDLE FindBestApcThread(DWORD targetPid) {
+	HMODULE hNtDll;
+	pfnNtQueryInformationThread NtQueryInformationThread;
+	HANDLE hSnapshot;
+	THREADENTRY32 te;
 	HANDLE hBest = INVALID_HANDLE_VALUE;
 	long long bestScore = LLONG_MIN;
 
+	hNtDll = GetModuleHandleW(L"ntdll.dll");
+	if (!hNtDll) return INVALID_HANDLE_VALUE;
+
+	NtQueryInformationThread = (pfnNtQueryInformationThread)
+		GetProcAddress(hNtDll, "NtQueryInformationThread");
+	if (!NtQueryInformationThread) return INVALID_HANDLE_VALUE;
+
+	hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	if (hSnapshot == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
+
+	ZeroMemory(&te, sizeof(te));
+	te.dwSize = sizeof(te);
+
 	if (Thread32First(hSnapshot, &te)) {
 		do {
+			HANDLE hThread;
+			ULONG suspendCount = 1;
+			THREAD_CYCLE_TIME_INFORMATION cycleInfo;
+			THREAD_BASIC_INFORMATION basicInfo;
+			LONG priority = 8;
+			long long score;
+			PWSTR desc = NULL;
+
 			if (te.th32OwnerProcessID != targetPid) continue;
 
-			HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, te.th32ThreadID);
+			hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, te.th32ThreadID);
 			if (!hThread) continue;
 
-			ULONG suspendCount = 1;
-			NtQueryInformationThread(hThread, ThreadSuspendCount, &suspendCount, sizeof(suspendCount), nullptr);
+			NtQueryInformationThread(hThread, ThreadSuspendCount, &suspendCount, sizeof(suspendCount), NULL);
 
-			THREAD_CYCLE_TIME_INFORMATION cycleInfo{};
-			NtQueryInformationThread(hThread, ThreadCycleTime, &cycleInfo, sizeof(cycleInfo), nullptr);
+			ZeroMemory(&cycleInfo, sizeof(cycleInfo));
+			NtQueryInformationThread(hThread, ThreadCycleTime, &cycleInfo, sizeof(cycleInfo), NULL);
 
 			if (cycleInfo.AccumulatedCycles == 0) {
 				CloseHandle(hThread);
 				continue;
 			}
 
-			THREAD_BASIC_INFORMATION basicInfo{};
-			LONG priority = 8;
-			if (NT_SUCCESS(NtQueryInformationThread(hThread, ThreadBasicInformation, &basicInfo, sizeof(basicInfo), nullptr)))
+			ZeroMemory(&basicInfo, sizeof(basicInfo));
+			if (NT_SUCCESS(NtQueryInformationThread(hThread, ThreadBasicInformation, &basicInfo, sizeof(basicInfo), NULL)))
 				priority = basicInfo.Priority;
 
-			long long score = static_cast<long long>(cycleInfo.AccumulatedCycles / 1'000'000ULL);
+			score = (long long)(cycleInfo.AccumulatedCycles / 1000000ULL);
 
 			if (suspendCount == 0) score += 500; else score -= 800LL * suspendCount;
 			if (priority >= 7 && priority <= 11) score += 150;
 
-			PWSTR desc = nullptr;
 			if (SUCCEEDED(GetThreadDescription(hThread, &desc)) && desc) {
-				std::wstring_view dv(desc);
-				if (dv.find(L"pool")       != std::wstring_view::npos ||
-					dv.find(L"Worker")     != std::wstring_view::npos ||
-					dv.find(L"ThreadPool") != std::wstring_view::npos)
+				if (wcsstr(desc, L"pool") || wcsstr(desc, L"Worker") || wcsstr(desc, L"ThreadPool"))
 					score += 300;
 				LocalFree(desc);
 			}
@@ -88,52 +110,63 @@ HANDLE FindBestApcThread(DWORD targetPid) {
 	return hBest;
 }
 
-HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVOID* outRemoteStub = nullptr)
+static HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVOID* outRemoteStub)
 {
-	HANDLE hThread = FindBestApcThread(GetProcessId(hProcess));
+	HANDLE hThread;
+	pfnNtQueueApcThreadEx2 fNtQueueApcThreadEx2;
+	SIZE_T stubSize = 0;
+	LPVOID remoteBase;
+	BYTE* stub = NULL;
+	LPVOID codeEntry;
+	PPS_APC_ROUTINE apcEntry;
+	NTSTATUS result;
+#if _WIN64
+	ProcessBitness bitness;
+#endif
 
-	if (!hThread)
+	hThread = FindBestApcThread(GetProcessId(hProcess));
+	if (!hThread || hThread == INVALID_HANDLE_VALUE)
 		return INVALID_HANDLE_VALUE;
 
-	pfnNtQueueApcThreadEx2 fNtQueueApcThreadEx2 = (pfnNtQueueApcThreadEx2)GetProcAddress(GetModuleHandleA("ntdll"), "NtQueueApcThreadEx2");
+	fNtQueueApcThreadEx2 = (pfnNtQueueApcThreadEx2)
+		GetProcAddress(GetModuleHandleA("ntdll"), "NtQueueApcThreadEx2");
 	if (!fNtQueueApcThreadEx2) { CloseHandle(hThread); return INVALID_HANDLE_VALUE; }
-	SIZE_T stubSize = 0;
+
 #if _WIN64
-	ProcessBitness bitness = GetProcessBitness(hProcess);
-	if (bitness == ProcessBitness::Bit32) {
-		BYTE* tmp = GetAPCCrossStub(0, 0, 0, stubSize); delete[] tmp;
-	} else {
-		BYTE* tmp = GetAPCStub64(0, 0, 0, stubSize); delete[] tmp;
-	}
+	bitness = GetProcessBitness(hProcess);
+	stubSize = (bitness == PB_Bit32) ? kAPCStub32Size : kAPCStub64Size;
 #else
-	{ BYTE* tmp = GetAPCStub32(0, 0, 0, stubSize); delete[] tmp; }
+	stubSize = kAPCStub32Size;
 #endif
 
-	LPVOID remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 	if (!remoteBase) { CloseHandle(hThread); return INVALID_HANDLE_VALUE; }
 
-	BYTE* stub = nullptr;
 #if _WIN64
-	if (bitness == ProcessBitness::Bit32)
-		stub = GetAPCCrossStub((DWORD)startAddress, (DWORD)lParam, (DWORD64)remoteBase, stubSize);
+	if (bitness == PB_Bit32)
+		stub = GetAPCStub32((DWORD)(DWORD_PTR)startAddress, (DWORD)(DWORD_PTR)lParam, (DWORD64)remoteBase, &stubSize);
 	else
-		stub = GetAPCStub64((DWORD64)startAddress, (DWORD64)lParam, (DWORD64)remoteBase, stubSize);
+		stub = GetAPCStub64((DWORD64)startAddress, (DWORD64)lParam, (DWORD64)remoteBase, &stubSize);
 #else
-	stub = GetAPCStub32((DWORD)startAddress, (DWORD)lParam, (DWORD64)remoteBase, stubSize);
+	stub = GetAPCStub32((DWORD)startAddress, (DWORD)lParam, (DWORD64)remoteBase, &stubSize);
 #endif
 
-	if (!WriteProcessMemory(hProcess, remoteBase, stub, stubSize, nullptr)) {
-		delete[] stub;
-		VirtualFreeEx(hProcess, remoteBase, 0, MEM_RELEASE);
+	if (!WriteRemoteStub(hProcess, remoteBase, stub, stubSize)) {
 		CloseHandle(hThread);
 		return INVALID_HANDLE_VALUE;
 	}
-	delete[] stub;
 
-	LPVOID codeEntry = (BYTE*)remoteBase + 8;
-	NTSTATUS result = fNtQueueApcThreadEx2(hThread, NULL, QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, (PPS_APC_ROUTINE)codeEntry, lParam, NULL, NULL);
+	codeEntry = (BYTE*)remoteBase + 8;
+#if _WIN64
+	apcEntry = (bitness == PB_Bit32)
+		? (PPS_APC_ROUTINE)Wow64EncodeApcRoutine(codeEntry)
+		: (PPS_APC_ROUTINE)codeEntry;
+#else
+	apcEntry = (PPS_APC_ROUTINE)codeEntry;
+#endif
+	result = fNtQueueApcThreadEx2(hThread, NULL, QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, apcEntry, lParam, NULL, NULL);
 	if (result == STATUS_NOT_SUPPORTED)
-		result = fNtQueueApcThreadEx2(hThread, NULL, 0, (PPS_APC_ROUTINE)codeEntry, lParam, NULL, NULL);
+		result = fNtQueueApcThreadEx2(hThread, NULL, 0, apcEntry, lParam, NULL, NULL);
 
 	CloseHandle(hThread);
 
@@ -144,3 +177,7 @@ HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVOID* out
 	if (outRemoteStub) *outRemoteStub = remoteBase;
 	return NULL;
 }
+
+#ifdef __cplusplus
+}
+#endif
