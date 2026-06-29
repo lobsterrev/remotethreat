@@ -33,14 +33,14 @@ The rows are the **injector** build; the columns are the **target** process.
 
 HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 
-RT_Execution exec = RT_Create(hProcess, startAddress, lParam, RT_Hijack);
+RemoteThreat exec = RT_Create(hProcess, startAddress, lParam, RT_Hijack);
 if (!RT_IsValid(&exec)) { /* handle failure */ }
 
 RT_Wait(&exec, INFINITE);   // block until the remote code has run
 RT_Close(&exec);            // mark execution as invalid
 ```
 
-`RT_Create` returns an `RT_Execution` struct. The remote stub allocation is intentionally not freed by `RT_Close` — the target process may still execute it asynchronously. Free it with `VirtualFreeEx` once you are certain execution has completed.
+`RT_Create` returns a `RemoteThreat` struct. The remote stub allocation is intentionally not freed by `RT_Close` — the target process may still execute it asynchronously. Free it with `VirtualFreeEx` once you are certain execution has completed.
 
 ### Polling instead of blocking
 
