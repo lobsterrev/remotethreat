@@ -1,6 +1,7 @@
 #pragma once
 #include "rt_utl.h"
 #include "rt_asm.h"
+#include <tlhelp32.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -10,9 +11,10 @@ extern "C" {
 #define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BB)
 #endif
 
-// From phnt: encodes a 32-bit APC routine pointer so the kernel knows to
-// dispatch the APC via the WoW64 32-bit user-mode dispatcher rather than as
-// a native 64-bit routine.
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
 #ifndef Wow64EncodeApcRoutine
 #define Wow64EncodeApcRoutine(ApcRoutine) \
     ((PVOID)((0 - ((LONG_PTR)(ApcRoutine))) << 2))

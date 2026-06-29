@@ -1,8 +1,7 @@
 #pragma once
 #include <windows.h>
-#include <tlhelp32.h>
-#include <limits.h>
 #include <stdlib.h>
+
 
 #ifdef __cplusplus
 extern "C" {

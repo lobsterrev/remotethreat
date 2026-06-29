@@ -1,5 +1,6 @@
 #pragma once
 #include "rt_asm.h"
+#include <tlhelp32.h>
 
 #ifdef __cplusplus
 extern "C" {
