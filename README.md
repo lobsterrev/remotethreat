@@ -33,7 +33,7 @@ The rows are the **injector** build; the columns are the **target** process.
 
 HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 
-RemoteThreat exec = RT_Create(hProcess, startAddress, lParam, RT_Hijack);
+RemoteThreat exec = CreateRemoteThreat(hProcess, startAddress, lParam, RT_Hijack);
 if (!RT_IsValid(&exec)) { /* handle failure */ }
 
 RT_Wait(&exec, INFINITE);   // block until the remote code has run
