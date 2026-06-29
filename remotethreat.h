@@ -17,14 +17,14 @@ typedef enum RT_Method {
     RT_PICI
 } RT_Method;
 
-typedef struct RT_Execution {
+typedef struct RemoteThreat {
     HANDLE hProcess; 
     LPVOID stub;     
     int    valid;
-} RT_Execution;
+} RemoteThreat;
 
-static RT_Execution RT_Create(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, RT_Method method) {
-    RT_Execution e;
+static RemoteThreat CreateRemoteThreat(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, RT_Method method) {
+    RemoteThreat e;
     LPVOID stub = NULL;
 
     e.hProcess = hProcess;
@@ -53,18 +53,18 @@ static RT_Execution RT_Create(HANDLE hProcess, LPVOID startAddress, LPVOID lPara
     return e;
 }
 
-static int RT_IsValid(const RT_Execution* e) {
+static int RT_IsValid(const RemoteThreat* e) {
     return e && e->valid;
 }
 
-static int RT_IsDone(const RT_Execution* e) {
+static int RT_IsDone(const RemoteThreat* e) {
     BYTE flag = 0;
     if (!e || !e->valid) return 0;
     ReadProcessMemory(e->hProcess, e->stub, &flag, 1, NULL);
     return flag != 0;
 }
 
-static int RT_Wait(const RT_Execution* e, DWORD timeoutMs) {
+static int RT_Wait(const RemoteThreat* e, DWORD timeoutMs) {
     ULONGLONG start;
     if (!e || !e->valid) return 0;
     start = GetTickCount64();
@@ -76,7 +76,7 @@ static int RT_Wait(const RT_Execution* e, DWORD timeoutMs) {
     return 1;
 }
 
-static void RT_Close(RT_Execution* e) {
+static void RT_Close(RemoteThreat* e) {
     if (!e) return;
     e->valid = 0;
 }
