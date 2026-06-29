@@ -1,6 +1,6 @@
 # RemoteThreat
 
-Header-only C library for remote thread injection on Windows (x86/x64), with WOW64 cross-architecture support.
+Header-only C library for remote code injection without the creation of threads on Windows (x86/x64), with WOW64 cross-architecture support.
 
 Callable from C11 and later, or from C++ via the bundled `remotethreat.hpp` wrapper which restores a RAII `RT::Execution` class.
 
