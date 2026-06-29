@@ -1,7 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <stdlib.h>
-
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,13 +58,98 @@ static ProcessBitness GetProcessBitness(HANDLE hProcess) {
 	return is64bitOS ? PB_Bit64 : PB_Bit32;
 }
 
-/* Writes stub to dest in hProcess, free()s stub, returns nonzero on success.
-   On failure, free()s stub, frees dest via VirtualFreeEx, and returns 0. */
-static int WriteRemoteStub(HANDLE hProcess, LPVOID dest, BYTE* stub, SIZE_T size) {
-	BOOL ok = WriteProcessMemory(hProcess, dest, stub, size, NULL);
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+#define RT_ViewUnmap 2
+
+typedef NTSTATUS (NTAPI* pfnNtCreateSection)(
+	PHANDLE        SectionHandle,
+	ACCESS_MASK    DesiredAccess,
+	PVOID          ObjectAttributes,
+	PLARGE_INTEGER MaximumSize,
+	ULONG          SectionPageProtection,
+	ULONG          AllocationAttributes,
+	HANDLE         FileHandle);
+
+typedef NTSTATUS (NTAPI* pfnNtMapViewOfSection)(
+	HANDLE         SectionHandle,
+	HANDLE         ProcessHandle,
+	PVOID*         BaseAddress,
+	ULONG_PTR      ZeroBits,
+	SIZE_T         CommitSize,
+	PLARGE_INTEGER SectionOffset,
+	PSIZE_T        ViewSize,
+	ULONG          InheritDisposition,
+	ULONG          AllocationType,
+	ULONG          Win32Protect);
+
+typedef NTSTATUS (NTAPI* pfnNtUnmapViewOfSection)(
+	HANDLE ProcessHandle,
+	PVOID  BaseAddress);
+
+static LPVOID AllocRemoteStub(HANDLE hProcess, SIZE_T size, LPVOID* outLocalBase)
+{
+	static pfnNtCreateSection      fNtCreateSection      = NULL;
+	static pfnNtMapViewOfSection   fNtMapViewOfSection   = NULL;
+	static pfnNtUnmapViewOfSection fNtUnmapViewOfSection = NULL;
+	HANDLE hNtdll, hSection = NULL;
+	LARGE_INTEGER sectionSize;
+	LPVOID remoteBase = NULL, localBase = NULL;
+	SIZE_T viewSize = 0;
+	NTSTATUS st;
+
+	if (!fNtCreateSection) {
+		hNtdll = GetModuleHandleA("ntdll.dll");
+		fNtCreateSection      = (pfnNtCreateSection)     GetProcAddress(hNtdll, "NtCreateSection");
+		fNtMapViewOfSection   = (pfnNtMapViewOfSection)  GetProcAddress(hNtdll, "NtMapViewOfSection");
+		fNtUnmapViewOfSection = (pfnNtUnmapViewOfSection)GetProcAddress(hNtdll, "NtUnmapViewOfSection");
+	}
+	if (!fNtCreateSection || !fNtMapViewOfSection || !fNtUnmapViewOfSection)
+		return NULL;
+
+	sectionSize.QuadPart = (LONGLONG)size;
+	st = fNtCreateSection(&hSection, SECTION_ALL_ACCESS, NULL,
+		&sectionSize, PAGE_EXECUTE_READWRITE, SEC_COMMIT, NULL);
+	if (!NT_SUCCESS(st)) return NULL;
+
+	st = fNtMapViewOfSection(hSection, hProcess, &remoteBase,
+		0, 0, NULL, &viewSize, RT_ViewUnmap, 0, PAGE_EXECUTE_READWRITE);
+	if (!NT_SUCCESS(st)) { CloseHandle(hSection); return NULL; }
+
+	viewSize = 0;
+	st = fNtMapViewOfSection(hSection, GetCurrentProcess(), &localBase,
+		0, 0, NULL, &viewSize, RT_ViewUnmap, 0, PAGE_READWRITE);
+	if (!NT_SUCCESS(st)) {
+		fNtUnmapViewOfSection(hProcess, remoteBase);
+		CloseHandle(hSection);
+		return NULL;
+	}
+
+	CloseHandle(hSection);
+	*outLocalBase = localBase;
+	return remoteBase;
+}
+
+static void CommitRemoteStub(LPVOID localBase, BYTE* stub, SIZE_T size)
+{
+	static pfnNtUnmapViewOfSection fNtUnmapViewOfSection = NULL;
+	if (!fNtUnmapViewOfSection)
+		fNtUnmapViewOfSection = (pfnNtUnmapViewOfSection)
+			GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtUnmapViewOfSection");
+	memcpy(localBase, stub, size);
 	free(stub);
-	if (!ok) VirtualFreeEx(hProcess, dest, 0, MEM_RELEASE);
-	return ok ? 1 : 0;
+	if (fNtUnmapViewOfSection) fNtUnmapViewOfSection(GetCurrentProcess(), localBase);
+}
+
+static void FreeRemoteStub(HANDLE hProcess, LPVOID remoteBase)
+{
+	static pfnNtUnmapViewOfSection fNtUnmapViewOfSection = NULL;
+	if (!fNtUnmapViewOfSection)
+		fNtUnmapViewOfSection = (pfnNtUnmapViewOfSection)
+			GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtUnmapViewOfSection");
+	if (fNtUnmapViewOfSection) fNtUnmapViewOfSection(hProcess, remoteBase);
 }
 
 #ifdef __cplusplus

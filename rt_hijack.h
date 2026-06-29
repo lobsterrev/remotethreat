@@ -1,4 +1,5 @@
 #pragma once
+#include "rt_utl.h"
 #include "rt_asm.h"
 #include <tlhelp32.h>
 
@@ -50,6 +51,7 @@ static HANDLE HijackThread(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, 
     SIZE_T stubSize = 0;
     LPVOID stubPtr = NULL;
     LPVOID remoteBase = NULL;
+    LPVOID localBase = NULL;
 
     threadId = SelectThread(hProcess).th32ThreadID;
     if (!threadId) return NULL;
@@ -71,10 +73,10 @@ static HANDLE HijackThread(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, 
         ctx.ContextFlags = WOW64_CONTEXT_FULL;
         if (!Wow64GetThreadContext(hThread, &ctx)) goto fail;
         stubSize = kHijackStub32Size;
-        remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        remoteBase = AllocRemoteStub(hProcess, stubSize, &localBase);
         if (!remoteBase) goto fail;
-        stub = GetHijackStub32((DWORD)startAddress, (DWORD)lParam, ctx.Eip, (DWORD)remoteBase, &stubSize);
-        if (!WriteRemoteStub(hProcess, remoteBase, stub, stubSize)) { remoteBase = NULL; goto fail; }
+        stub = GetHijackStub32((DWORD)startAddress, (DWORD)lParam, ctx.Eip, (DWORD)remoteBase);
+        CommitRemoteStub(localBase, stub, stubSize);
         ctx.Eip = (DWORD)(uintptr_t)((BYTE*)remoteBase + 8);
         if (!Wow64SetThreadContext(hThread, &ctx)) goto fail;
         stubPtr = remoteBase;
@@ -84,10 +86,10 @@ static HANDLE HijackThread(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, 
         ctx.ContextFlags = CONTEXT_FULL;
         if (!GetThreadContext(hThread, &ctx)) goto fail;
         stubSize = kHijackStub64Size;
-        remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        remoteBase = AllocRemoteStub(hProcess, stubSize, &localBase);
         if (!remoteBase) goto fail;
-        stub = GetHijackStub64((DWORD64)startAddress, (DWORD64)lParam, ctx.Rip, (DWORD64)remoteBase, &stubSize);
-        if (!WriteRemoteStub(hProcess, remoteBase, stub, stubSize)) { remoteBase = NULL; goto fail; }
+        stub = GetHijackStub64((DWORD64)startAddress, (DWORD64)lParam, ctx.Rip, (DWORD64)remoteBase);
+        CommitRemoteStub(localBase, stub, stubSize);
         ctx.Rip = (uintptr_t)((BYTE*)remoteBase + 8);
         if (!SetThreadContext(hThread, &ctx)) goto fail;
         stubPtr = remoteBase;
@@ -99,10 +101,10 @@ static HANDLE HijackThread(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, 
         ctx.ContextFlags = CONTEXT_FULL;
         if (!GetThreadContext(hThread, &ctx)) goto fail;
         stubSize = kHijackStub32Size;
-        remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        remoteBase = AllocRemoteStub(hProcess, stubSize, &localBase);
         if (!remoteBase) goto fail;
-        stub = GetHijackStub32((DWORD)startAddress, (DWORD)lParam, ctx.Eip, (DWORD64)remoteBase, &stubSize);
-        if (!WriteRemoteStub(hProcess, remoteBase, stub, stubSize)) { remoteBase = NULL; goto fail; }
+        stub = GetHijackStub32((DWORD)startAddress, (DWORD)lParam, ctx.Eip, (DWORD64)remoteBase);
+        CommitRemoteStub(localBase, stub, stubSize);
         ctx.Eip = (DWORD)(uintptr_t)((BYTE*)remoteBase + 8);
         if (!SetThreadContext(hThread, &ctx)) goto fail;
         stubPtr = remoteBase;
@@ -115,7 +117,7 @@ static HANDLE HijackThread(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, 
     return hThread;
 
 fail:
-    if (remoteBase) VirtualFreeEx(hProcess, remoteBase, 0, MEM_RELEASE);
+    if (remoteBase) FreeRemoteStub(hProcess, remoteBase);
     while (ResumeThread(hThread) > 1);
     CloseHandle(hThread);
     return NULL;

@@ -141,11 +141,9 @@ static const SIZE_T kHijackStub64Size  = 8 + sizeof(stub64_hijack);
 static const SIZE_T kAPCStub32Size     = 8 + sizeof(stub32_apc);
 static const SIZE_T kAPCStub64Size     = 8 + sizeof(stub64_apc);
 
-static BYTE* GetHijackStub32(DWORD startAddress, DWORD lParam, DWORD dwReturnAddress, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetHijackStub32(DWORD startAddress, DWORD lParam, DWORD dwReturnAddress, DWORD64 flagAddr)
 {
-    SIZE_T size = 8 + sizeof(stub32_hijack);
-    BYTE* buf = (BYTE*)calloc(1, size);
-    *outSize = size;
+    BYTE* buf = (BYTE*)calloc(1, kHijackStub32Size);
     memcpy(buf + 8, stub32_hijack, sizeof(stub32_hijack));
     *(DWORD*)&buf[8 + 14] = startAddress;
     *(DWORD*)&buf[8 + 19] = lParam;
@@ -154,11 +152,9 @@ static BYTE* GetHijackStub32(DWORD startAddress, DWORD lParam, DWORD dwReturnAdd
     return buf;
 }
 
-static BYTE* GetHijackStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 dwReturnAddress, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetHijackStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 dwReturnAddress, DWORD64 flagAddr)
 {
-    SIZE_T size = 8 + sizeof(stub64_hijack);
-    BYTE* buf = (BYTE*)calloc(1, size);
-    *outSize = size;
+    BYTE* buf = (BYTE*)calloc(1, kHijackStub64Size);
     memcpy(buf + 8, stub64_hijack, sizeof(stub64_hijack));
     *(DWORD64*)&buf[8 + 27] = lParam;
     *(DWORD64*)&buf[8 + 37] = startAddress;
@@ -167,11 +163,9 @@ static BYTE* GetHijackStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 dwRet
     return buf;
 }
 
-static BYTE* GetAPCStub32(DWORD startAddress, DWORD lParam, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetAPCStub32(DWORD startAddress, DWORD lParam, DWORD64 flagAddr)
 {
-    SIZE_T size = 8 + sizeof(stub32_apc);
-    BYTE* buf = (BYTE*)calloc(1, size);
-    *outSize = size;
+    BYTE* buf = (BYTE*)calloc(1, kAPCStub32Size);
     memcpy(buf + 8, stub32_apc, sizeof(stub32_apc));
     *(DWORD*)&buf[8 + 1]  = startAddress;
     *(DWORD*)&buf[8 + 6]  = lParam;
@@ -179,11 +173,9 @@ static BYTE* GetAPCStub32(DWORD startAddress, DWORD lParam, DWORD64 flagAddr, SI
     return buf;
 }
 
-static BYTE* GetAPCStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetAPCStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 flagAddr)
 {
-    SIZE_T size = 8 + sizeof(stub64_apc);
-    BYTE* buf = (BYTE*)calloc(1, size);
-    *outSize = size;
+    BYTE* buf = (BYTE*)calloc(1, kAPCStub64Size);
     memcpy(buf + 8, stub64_apc, sizeof(stub64_apc));
     *(DWORD64*)&buf[8 + 19] = lParam;
     *(DWORD64*)&buf[8 + 29] = startAddress;
@@ -272,11 +264,10 @@ static const BYTE stub64_pici[] = {
 
 static const SIZE_T kPICIStub64Size = sizeof(stub64_pici);
 
-static BYTE* GetPICIStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetPICIStub64(DWORD64 startAddress, DWORD64 lParam, DWORD64 flagAddr)
 {
-    *outSize = sizeof(stub64_pici);
-    BYTE* buf = (BYTE*)malloc(*outSize);
-    memcpy(buf, stub64_pici, *outSize);
+    BYTE* buf = (BYTE*)malloc(kPICIStub64Size);
+    memcpy(buf, stub64_pici, kPICIStub64Size);
     *(DWORD64*)&buf[12] = flagAddr;
     *(DWORD64*)&buf[70] = lParam;
     *(DWORD64*)&buf[80] = startAddress;
@@ -313,11 +304,10 @@ static const BYTE stub32_pici[] = {
 
 static const SIZE_T kPICIStub32Size = sizeof(stub32_pici);
 
-static BYTE* GetPICIStub32(DWORD startAddress, DWORD lParam, DWORD64 flagAddr, SIZE_T* outSize)
+static BYTE* GetPICIStub32(DWORD startAddress, DWORD lParam, DWORD64 flagAddr)
 {
-    *outSize = sizeof(stub32_pici);
-    BYTE* buf = (BYTE*)malloc(*outSize);
-    memcpy(buf, stub32_pici, *outSize);
+    BYTE* buf = (BYTE*)malloc(kPICIStub32Size);
+    memcpy(buf, stub32_pici, kPICIStub32Size);
     *(DWORD*)&buf[16] = (DWORD)flagAddr;
     *(DWORD*)&buf[30] = startAddress;
     *(DWORD*)&buf[35] = lParam;

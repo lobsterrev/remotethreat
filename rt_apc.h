@@ -118,6 +118,7 @@ static HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVO
 	pfnNtQueueApcThreadEx2 fNtQueueApcThreadEx2;
 	SIZE_T stubSize = 0;
 	LPVOID remoteBase;
+	LPVOID localBase = NULL;
 	BYTE* stub = NULL;
 	LPVOID codeEntry;
 	PPS_APC_ROUTINE apcEntry;
@@ -141,22 +142,19 @@ static HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVO
 	stubSize = kAPCStub32Size;
 #endif
 
-	remoteBase = VirtualAllocEx(hProcess, NULL, stubSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	remoteBase = AllocRemoteStub(hProcess, stubSize, &localBase);
 	if (!remoteBase) { CloseHandle(hThread); return INVALID_HANDLE_VALUE; }
 
 #if _WIN64
 	if (bitness == PB_Bit32)
-		stub = GetAPCStub32((DWORD)(DWORD_PTR)startAddress, (DWORD)(DWORD_PTR)lParam, (DWORD64)remoteBase, &stubSize);
+		stub = GetAPCStub32((DWORD)(DWORD_PTR)startAddress, (DWORD)(DWORD_PTR)lParam, (DWORD64)remoteBase);
 	else
-		stub = GetAPCStub64((DWORD64)startAddress, (DWORD64)lParam, (DWORD64)remoteBase, &stubSize);
+		stub = GetAPCStub64((DWORD64)startAddress, (DWORD64)lParam, (DWORD64)remoteBase);
 #else
-	stub = GetAPCStub32((DWORD)startAddress, (DWORD)lParam, (DWORD64)remoteBase, &stubSize);
+	stub = GetAPCStub32((DWORD)startAddress, (DWORD)lParam, (DWORD64)remoteBase);
 #endif
 
-	if (!WriteRemoteStub(hProcess, remoteBase, stub, stubSize)) {
-		CloseHandle(hThread);
-		return INVALID_HANDLE_VALUE;
-	}
+	CommitRemoteStub(localBase, stub, stubSize);
 
 	codeEntry = (BYTE*)remoteBase + 8;
 #if _WIN64
@@ -173,7 +171,7 @@ static HANDLE QueueAPC(HANDLE hProcess, LPVOID startAddress, LPVOID lParam, LPVO
 	CloseHandle(hThread);
 
 	if (!NT_SUCCESS(result)) {
-		VirtualFreeEx(hProcess, remoteBase, 0, MEM_RELEASE);
+		FreeRemoteStub(hProcess, remoteBase);
 		return INVALID_HANDLE_VALUE;
 	}
 	if (outRemoteStub) *outRemoteStub = remoteBase;

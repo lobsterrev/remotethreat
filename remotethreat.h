@@ -17,16 +17,9 @@ typedef enum RT_Method {
     RT_PICI
 } RT_Method;
 
-// Tracks a remote execution request created by RT_Create.
-// Completion is detected by reading the flag byte at the start of the remote
-// stub allocation (set by the stub when the payload returns).
-// Memory ownership:
-//   - hProcess is non-owning (the caller owns it)
-//   - stub is intentionally leaked (the target may still execute it
-//     asynchronously; freeing it before then would crash the target)
 typedef struct RT_Execution {
-    HANDLE hProcess; // non-owning
-    LPVOID stub;     // remote allocation; intentionally leaked
+    HANDLE hProcess; 
+    LPVOID stub;     
     int    valid;
 } RT_Execution;
 
@@ -64,7 +57,6 @@ static int RT_IsValid(const RT_Execution* e) {
     return e && e->valid;
 }
 
-// Non-blocking: returns nonzero once the injected code has run.
 static int RT_IsDone(const RT_Execution* e) {
     BYTE flag = 0;
     if (!e || !e->valid) return 0;
@@ -72,8 +64,6 @@ static int RT_IsDone(const RT_Execution* e) {
     return flag != 0;
 }
 
-// Blocks until the injected code has run, or until timeoutMs elapses.
-// Returns nonzero on completion, 0 on timeout / invalid execution.
 static int RT_Wait(const RT_Execution* e, DWORD timeoutMs) {
     ULONGLONG start;
     if (!e || !e->valid) return 0;
@@ -86,8 +76,6 @@ static int RT_Wait(const RT_Execution* e, DWORD timeoutMs) {
     return 1;
 }
 
-// Marks the execution as closed. Safe to call multiple times.
-// Does NOT free the remote stub allocation — see note on RT_Execution.
 static void RT_Close(RT_Execution* e) {
     if (!e) return;
     e->valid = 0;

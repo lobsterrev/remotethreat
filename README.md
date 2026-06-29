@@ -2,7 +2,7 @@
 
 Header-only C library for remote code injection without the creation of threads on Windows (x86/x64), with WOW64 cross-architecture support.
 
-Callable from C11 and later, or from C++ via the bundled `remotethreat.hpp` wrapper which restores a RAII `RT::Execution` class.
+Callable from C11 and later, and directly from C++ (the header is fully `extern "C"` guarded).
 
 ## Methods
 
@@ -50,24 +50,11 @@ while (!RT_IsDone(&exec))
 RT_Close(&exec);
 ```
 
-## Usage (C++ wrapper)
-
-```cpp
-#include "remotethreat.hpp"  // optional RAII wrapper
-
-HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-
-RT::Execution exec = RT::Create(hProcess, startAddress, lParam, RT::Hijack);
-if (!exec) { /* handle failure */ }
-
-exec.Wait();    // blocks until completion; RT_Close called automatically on destruction
-```
-
 ## Requirements
 
 - Windows x86 or x64
 - Run as administrator when targeting privileged processes
-- C11 or later (C++ callers: C++11 or later via `remotethreat.hpp`)
+- C11 or later (C++ callers: include `remotethreat.h` directly)
 
 ## License
 
